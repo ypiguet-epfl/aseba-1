@@ -6,6 +6,7 @@
 #include <boost/exception/diagnostic_information.hpp>
 #include <errno.h>
 #include "log.h"
+#include <fmt/color.h>
 #include "interfaces.h"
 #include "aseba_node_registery.h"
 #include "app_server.h"
@@ -33,6 +34,8 @@ static const auto lock_file_path = boost::filesystem::temp_directory_path() / "m
 
 #define DEFAULT_WS_PORT 8597
 
+static bool allow_remote_connections = false;
+
 #ifdef HAS_FB_TCP
 static int tcp_port = 0;    // default: ephemeral port
 #endif
@@ -45,13 +48,13 @@ static int ws_port = DEFAULT_WS_PORT;  // default: 8597
 static bool zeroconfPublish = true;
 #endif
 
-static void run_service(boost::asio::io_context& ctx) {
+void run_service(boost::asio::io_context& ctx) {
 
     // Gather a list of local ips so that we can detect connections from
     // the same machine.
-    std::set<boost::asio::ip::address> local_ips = mobsya::network_interfaces_addresses();
+    std::map<boost::asio::ip::address, boost::asio::ip::address> local_ips = mobsya::network_interfaces_addresses();
     for(auto&& ip : local_ips) {
-        mLogTrace("Local Ip : {}", ip.to_string());
+        mLogTrace("Local Ip : {} - Mask : {}", ip.first.to_string(), ip.second.to_string());
     }
 
     [[maybe_unused]] mobsya::uuid_generator& _ = boost::asio::make_service<mobsya::uuid_generator>(ctx);
@@ -70,7 +73,7 @@ static void run_service(boost::asio::io_context& ctx) {
 
     [[maybe_unused]] mobsya::wireless_configurator_service& ws =
         boost::asio::make_service<mobsya::wireless_configurator_service>(ctx);
-    // ws.enable();
+    //ws.enable();
 
 #ifdef HAS_FB_TCP
     // Create a server for regular tcp connection
@@ -100,11 +103,6 @@ static void run_service(boost::asio::io_context& ctx) {
     }
 #endif
 
-#ifdef HAS_ZEROCONF
-    // Enable Bonjour, Zeroconf
-    if (zeroconfPublish)
-	   node_registery.set_discovery();
-#endif
 
 #ifdef MOBSYA_TDM_ENABLE_USB
     mobsya::usb_server usb_server(ctx, {mobsya::THYMIO2_DEVICE_ID, mobsya::THYMIO_WIRELESS_DEVICE_ID});
@@ -118,6 +116,26 @@ static void run_service(boost::asio::io_context& ctx) {
     aseba_tcp_acceptor.accept();
 #endif
 
+    websocket_server.allow_remote_connections(allow_remote_connections);
+    websocket_server.accept();
+
+    tcp_server.allow_remote_connections(allow_remote_connections);
+    tcp_server.accept();
+
+    if(!allow_remote_connections){
+        mLogWarn("Remote connections are not allowed");
+    }
+    mLogTrace("=> TCP Server started on {}", tcp_server.endpoint().port());
+    mLogTrace("=> WS Server started on {}", websocket_server.endpoint().port());
+    mLogInfo("Server Password: {}", token_manager.password());
+
+#ifdef HAS_ZEROCONF
+    // Enable Bonjour/Zeroconf
+    // Make sure this is done after the different servers are started and accept connections
+    // So that clients can connect to discovered services
+    if (zeroconfPublish)
+    	node_registery.announce_on_zeroconf();
+#endif
     ctx.run();
 }
 
@@ -161,8 +179,10 @@ static int start() {
 }
 
 int main(int argc, char **argv) {
-
     for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--allow-remote-connections") {
+            allow_remote_connections = true;
+        }
 #ifdef HAS_FB_TCP
         if (i + 1 < argc && std::string(argv[i]) == "--tcpport") {
             std::string opt(argv[++i]);
