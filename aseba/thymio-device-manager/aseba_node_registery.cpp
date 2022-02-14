@@ -11,15 +11,17 @@
 
 namespace mobsya {
 
+#ifdef HAS_ZEROCONF
 static std::optional<aware::announce_socket> make_aware_announce_socket(boost::asio::execution_context& io_context)
 {
     try {
         return {static_cast<boost::asio::io_context&>(io_context)};
     } catch(boost::system::system_error& e) {
-         mLogError("Unable to start the discovy service {}", e.what());
+         mLogError("Unable to start the discovery service {}", e.what());
     }
     return std::nullopt;
 }
+#endif
 
 aseba_node_registery::aseba_node_registery(boost::asio::execution_context& io_context)
     : boost::asio::detail::service_base<aseba_node_registery>(static_cast<boost::asio::io_context&>(io_context))
