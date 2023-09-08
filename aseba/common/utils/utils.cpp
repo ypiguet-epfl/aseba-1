@@ -190,8 +190,11 @@ bool is_utf8_alpha_num(wchar_t c) {
 #ifdef _WIN32
     return IsCharAlphaNumericW(c);
 #else
+return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9';  // ascii
+/*
     static std::locale utf8Locale("en_US.UTF-8");
     return std::isalnum(c, utf8Locale);
+*/
 #endif
 }
 

@@ -1,11 +1,12 @@
-#include <boost/program_options.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/interprocess/sync/file_lock.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/thread.hpp>
 #include <boost/exception/diagnostic_information.hpp>
+#include <boost/program_options/cmdline.hpp>
 #include <errno.h>
 #include "log.h"
+#include <fmt/color.h>
 #include "interfaces.h"
 #include "aseba_node_registery.h"
 #include "app_server.h"
@@ -34,6 +35,8 @@ static const auto lock_file_path = boost::filesystem::temp_directory_path() / "m
 #define DEFAULT_TCP_PORT 8596
 #define DEFAULT_WS_PORT 8597
 
+static bool allow_remote_connections = false;
+
 #ifdef HAS_FB_TCP
 static int tcp_port = DEFAULT_TCP_PORT;    // default: 8596
 #endif
@@ -50,9 +53,9 @@ static void run_service(boost::asio::io_context& ctx) {
 
     // Gather a list of local ips so that we can detect connections from
     // the same machine.
-    std::set<boost::asio::ip::address> local_ips = mobsya::network_interfaces_addresses();
+    std::map<boost::asio::ip::address, boost::asio::ip::address> local_ips = mobsya::network_interfaces_addresses();
     for(auto&& ip : local_ips) {
-        mLogTrace("Local Ip : {}", ip.to_string());
+        mLogTrace("Local Ip : {} - Mask : {}", ip.first.to_string(), ip.second.to_string());
     }
 
     [[maybe_unused]] mobsya::uuid_generator& _ = boost::asio::make_service<mobsya::uuid_generator>(ctx);
@@ -80,6 +83,7 @@ static void run_service(boost::asio::io_context& ctx) {
 #ifdef HAS_ZEROCONF
         node_registery.set_tcp_endpoint(tcp_server.endpoint());
 #endif
+        tcp_server.allow_remote_connections(allow_remote_connections);
         tcp_server.accept();
         mLogInfo("=> TCP Server connected on {}", tcp_server.endpoint().port());
     }
@@ -94,8 +98,9 @@ static void run_service(boost::asio::io_context& ctx) {
     mobsya::application_server<mobsya::websocket_t> websocket_server(ctx, ws_port >= 0 ? ws_port : 0);
     if (ws_port >= 0) {
 #ifdef HAS_ZEROCONF
-	   node_registery.set_ws_endpoint(websocket_server.endpoint());
+        node_registery.set_ws_endpoint(websocket_server.endpoint());
 #endif
+        websocket_server.allow_remote_connections(allow_remote_connections);
         websocket_server.accept();
         mLogInfo("=> WS Server connected on {}", websocket_server.endpoint().port());
     }
@@ -123,7 +128,7 @@ static void run_service(boost::asio::io_context& ctx) {
 }
 
 
-static int start() {
+int start() {
     mLogInfo("Starting...");
     boost::asio::io_context ctx;
     boost::asio::signal_set sig(ctx);
@@ -161,9 +166,13 @@ static int start() {
     return 0;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
+    mobsya::setLogLevel(spdlog::level::info);
 
     for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--allow-remote-connections") {
+            allow_remote_connections = true;
+        } else
 #ifdef HAS_FB_TCP
         if (i + 1 < argc && std::string(argv[i]) == "--tcpport") {
             std::string opt(argv[++i]);
@@ -221,6 +230,7 @@ int main(int argc, char **argv) {
             std::cerr << "Usage: " << argv[0] << " [options]" << std::endl;
             std::cerr << std::endl;
             std::cerr << "Options: " << std::endl;
+            std::cerr << "  --allow-remote-connections  allow connections from other machines" << std::endl;
             std::cerr << "  --log level   log level (trace, debug, info, warn, error, or critical)" << std::endl;
             std::cerr << "                (default: trace)" << std::endl;
 #ifdef HAS_ZEROCONF

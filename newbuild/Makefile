@@ -24,7 +24,7 @@
 # environment variables:
 # HAS_ZEROCONF=anything:
 #  include zeroconf to advertise tcp and ws ports (_mobsya._tcp) and (if MOBSYA_TDM_ENABLE_TCP) browse tcp devices (_aseba._tcp)
-#  requires bonjour or avahi
+#  requires bonjour or avahi (sudo apt install libavahi-client-dev libavahi-compat-libdnssd-dev)
 # HAS_FIRMWARE_UPDATE=anything:
 #  include firmware update
 #  requires openssl
@@ -37,14 +37,22 @@
 # OPTIM=FALSE:
 #  no optimization, build for debugging with -g
 
+# To build for OpenWRT:
+# clear; clear; OPENWRT=TRUE make -f aseba/newbuild/Makefile
+
+
 TARGET ?= $(shell uname | tr '[:upper:]' '[:lower:]')
 OPTIM ?= TRUE
+
+ifdef OPENWRT
+HAS_LIBUSB = TRUE
+endif
 
 
 # BOOST = boost_1_67_0
 BOOST = boost_1_73_0
 
-vpath %.cpp aseba/aseba/thymio-device-manager:aseba/aseba/common/msg:aseba/aseba/compiler:aseba/aseba/common/utils:$(BOOST)/libs/filesystem/src:$(BOOST)/libs/thread/src/pthread:$(BOOST)/libs/thread/src:aseba/third_party/aware/src/bonjour:aseba/third_party/aware/src/detail:aseba/third_party/aware/src/bonjour/detail:aseba/third_party/aware/src:aseba/third_party/pugixml/src
+vpath %.cpp aseba/aseba/thymio-device-manager:aseba/aseba/common/msg:aseba/aseba/compiler:aseba/aseba/common/utils:$(BOOST)/libs/filesystem/src:$(BOOST)/libs/thread/src/pthread:$(BOOST)/libs/thread/src:$(BOOST)/libs/program_options/src:aseba/third_party/aware/src/bonjour:aseba/third_party/aware/src/detail:aseba/third_party/aware/src/bonjour/detail:aseba/third_party/aware/src:aseba/third_party/pugixml/src
 vpath %.cc aseba/third_party/fmt/src
 
 CXXFLAGS = \
@@ -87,7 +95,8 @@ OBJ_PUGI = \
 OBJ_BOOST = \
 	operations.o path.o unique_path.o utf8_codecvt_facet.o \
 	thread.o once_atomic.o future.o \
-	exception.o directory.o
+	exception.o directory.o \
+	options_description.o value_semantic.o variables_map.o cmdline.o positional_options.o convert.o utf8_codecvt_facet-program_options.o
 
 OBJ_LIBUSB = \
 	aseba/third_party/libusb/liblibusb.a
@@ -197,11 +206,20 @@ CXXFLAGS += \
 
 LIB += -ldl -lpthread
 
+ifdef OPENWRT
+
+LIB += -latomic
+LIB += -static-libstdc++
+
+endif
+
 ifdef HAS_LIBUSB
 
 # libusb
 
-OBJ += usbserver.o usbacceptor.o usbdevice.o $(OBJ_LIBUSB)
+OBJ += usbserver.o usbacceptor.o usbdevice.o
+
+OBJ += $(OBJ_LIBUSB)
 
 CXXFLAGS += \
 	-DMOBSYA_TDM_ENABLE_USB \
@@ -244,6 +262,17 @@ CXXFLAGS += -g
 LDFLAGS += -g
 endif
 
+ifdef OPENWRT
+CC = /home/piguet/Pro/EPFL/Mobots/tdm-build-new/x-openwrt/gcc
+CXX = /home/piguet/Pro/EPFL/Mobots/tdm-build-new/x-openwrt/g++
+CXXFLAGS += -DFLATBUFFERS_LOCALE_INDEPENDENT=0
+CXXFLAGS += -isystem .
+CMAKEFLAGS = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX)
+
+CXXFLAGS += -D_USE_32BIT_TIME_T
+
+endif
+
 tdm: $(OBJ) $(MISC) aseba
 	$(CXX) $(LDFLAGS) -o $@ $(OBJ) $(LIB)
 
@@ -262,6 +291,9 @@ utils_flatbuffers.o: aseba/third_party/flatbuffers/src/util.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 utils_aseba.o: aseba/aseba/common/utils/utils.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+utf8_codecvt_facet-program_options.o: boost_1_73_0/libs/program_options/src/utf8_codecvt_facet.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 aseba/aseba/flatbuffers/thymio_generated.h: aseba/third_party/flatbuffers/flatc aseba/aseba/flatbuffers/thymio.fbs
@@ -283,7 +315,7 @@ expected/include/tl/expected.hpp:
 	git clone https://github.com/TartanLlama/expected
 
 aseba/third_party/libusb/liblibusb.a:
-	(cd aseba/third_party/libusb; cmake .; make)
+	(cd aseba/third_party/libusb; cmake $(CMAKEFLAGS) .; make)
 
 # some dependencies for tdm source code
 
